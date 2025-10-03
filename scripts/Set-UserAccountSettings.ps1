@@ -19,7 +19,7 @@ Write-Host "======================================`n" -ForegroundColor Cyan
 # ===============================
 # Setup Logging
 # ===============================
-$logPath = "$env:USERPROFILE\Desktop\CyberPatriot_UserConfig.log"
+$logPath = "$env:USERPROFILE\Downloads\CyberPatriot_UserConfig.log"
 "=== CyberPatriot User Config Log - $(Get-Date) ===" | Out-File -FilePath $logPath -Encoding UTF8
 
 function Write-Log {
@@ -27,6 +27,7 @@ function Write-Log {
   $timestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
   "$timestamp - $Message" | Out-File -FilePath $logPath -Append -Encoding UTF8
 }
+
 
 # ===============================
 # Locate CyberPatriot README
@@ -194,3 +195,9 @@ Write-Log "  - Authorized admins: Passwords reset from README + change required"
 Write-Log "  - Unauthorized users: Accounts disabled"
 
 Write-Host "`n======================================" -ForegroundColor Cyan
+Write-Host "Log file saved to: $logPath" -ForegroundColor Yellow
+Write-Log "Script execution complete. Log closed."
+
+# Auto-open the log in Notepad
+Start-Process notepad.exe $logPath
+
