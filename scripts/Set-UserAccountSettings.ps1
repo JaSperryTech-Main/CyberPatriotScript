@@ -182,8 +182,8 @@ foreach ($user in $allUsers) {
           Write-Log "  Action: Password reset for admin $uname"
         }
         catch {
-          Write-Host "  Failed to reset password for $uname: $_" -ForegroundColor Red
-          Write-Log "  ERROR: Failed to reset password for $uname: $_"
+          Write-Host "  Failed to reset password for ${uname}: $_" -ForegroundColor Red
+          Write-Log "  ERROR: Failed to reset password for ${uname}: $_"
         }
       }
       else {
@@ -198,7 +198,8 @@ foreach ($user in $allUsers) {
       Write-Log "  Result: Password change required at next logon"
     }
     catch {
-      Write-Log "  ERROR applying password flags for $uname: $_"
+      Write-Host "Admin password for ${user}: $($adminPasswordMap[$user])"
+
     }
   }
   else {
