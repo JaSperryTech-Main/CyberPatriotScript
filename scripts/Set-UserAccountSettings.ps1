@@ -52,23 +52,32 @@ Write-Log "Found README at path: $($readmePath.FullName)"
 $readmeContent = Get-Content -Path $readmePath.FullName -Raw
 
 # ===============================
-# Log Critical Services section
+# Clean README and log Critical Services
 # ===============================
-$criticalServices = ($readmeContent -split "Critical Services:")[1]
-Write-Host "`nLogging Critical Services section..." -ForegroundColor Cyan
-Write-Log "=== Critical Services Section ==="
-$criticalServices -split "`n" | ForEach-Object { Write-Log $_ }
-Write-Log "=== End Critical Services ==="
+$cleanContent = $readmeContent -replace '<.*?>', ''
+Write-Log "=== Cleaned README Content Preview ==="
+$cleanContent -split "`n" | ForEach-Object { Write-Log $_ }
+Write-Log "=== End README Preview ==="
+
+$criticalServices = ($cleanContent -split "Critical Services:")[1]
+if ($criticalServices) {
+  Write-Log "=== Critical Services Section ==="
+  $criticalServices -split "`n" | ForEach-Object { Write-Log $_ }
+  Write-Log "=== End Critical Services ==="
+}
 
 # ===============================
-# Parse Administrators and Users
+# Parse Admins and Users from squished format
 # ===============================
-$adminsBlock = [regex]::Match($criticalServices, "Authorized Administrators:(.+?)Authorized Users:", "Singleline").Groups[1].Value.Trim()
-$usersBlock = [regex]::Match($criticalServices, "Authorized Users:(.+)", "Singleline").Groups[1].Value.Trim()
+$authLineMatch = [regex]::Match($cleanContent, "Authorized Administrators:(.+)Authorized Users:(.+)", "Singleline")
+$adminsBlock = $authLineMatch.Groups[1].Value.Trim()
+$usersBlock = $authLineMatch.Groups[2].Value.Trim()
 
+# Parse Admins
 $authorizedAdmins = @()
 $adminPasswordMap = @{}
-$adminMatches = [regex]::Matches($adminsBlock, "(\w+)\s+password:\s+(\S+)")
+$adminPattern = "(\w+)(?:\s*\(you\))?\s*password:\s*([^\s]+)"
+$adminMatches = [regex]::Matches($adminsBlock, $adminPattern)
 foreach ($m in $adminMatches) {
   $username = $m.Groups[1].Value
   $password = $m.Groups[2].Value
@@ -76,18 +85,15 @@ foreach ($m in $adminMatches) {
   $adminPasswordMap[$username] = $password
 }
 
-$authorizedUsers = $usersBlock -split "\s+" | Where-Object { $_ -match "^\w+$" }
+# Parse Users
+$usersBlockClean = $usersBlock -replace '[^a-zA-Z0-9]', ' '
+$authorizedUsers = $usersBlockClean -split '\s+' | Where-Object { $_ -match '^\w+$' }
 
-# Log what was parsed
+# Log parsed admins/users
 Write-Log "`n=== Parsed Authorized Administrators ==="
-foreach ($u in $authorizedAdmins) {
-  Write-Log "Admin: $u - Password: $($adminPasswordMap[$u])"
-}
-
+foreach ($a in $authorizedAdmins) { Write-Log "Admin: $a - Password: $($adminPasswordMap[$a])" }
 Write-Log "`n=== Parsed Authorized Users ==="
-foreach ($u in $authorizedUsers) {
-  Write-Log "User: $u"
-}
+foreach ($u in $authorizedUsers) { Write-Log "User: $u" }
 
 # Combine all authorized accounts
 $allAuthorized = $authorizedAdmins + $authorizedUsers
