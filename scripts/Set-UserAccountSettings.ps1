@@ -1,4 +1,4 @@
-# Script 3: User Account Settings Configuration (Automated via README)
+# Script 3: User Account Settings Configuration (Automated via README Shortcut)
 # Windows Server 2019/2022
 # Must be run with Administrator privileges
 
@@ -29,45 +29,56 @@ function Write-Log {
 }
 
 # ===============================
-# Locate CyberPatriot README
+# Locate CyberPatriot README shortcut (.lnk)
 # ===============================
 $desktopPaths = @(
   [Environment]::GetFolderPath("Desktop"),
   "$env:PUBLIC\Desktop"
 )
 
-$readmePath = $desktopPaths | ForEach-Object {
-  Get-ChildItem -Path $_ -Filter "*CyberPatriot*README*" -ErrorAction SilentlyContinue
+$readmeShortcut = $desktopPaths | ForEach-Object {
+  Get-ChildItem -Path $_ -Filter "*CyberPatriot*README*.lnk" -ErrorAction SilentlyContinue
 } | Select-Object -First 1
 
-if (-not $readmePath) {
-  Write-Host "ERROR: CyberPatriot README not found on Desktop!" -ForegroundColor Red
-  Write-Log "ERROR: CyberPatriot README not found on Desktop!"
+if (-not $readmeShortcut) {
+  Write-Host "ERROR: CyberPatriot README shortcut not found!" -ForegroundColor Red
+  Write-Log "ERROR: CyberPatriot README shortcut not found!"
   exit 1
 }
 
-Write-Host "Found README: $($readmePath.FullName)" -ForegroundColor Green
-Write-Log "Found README at path: $($readmePath.FullName)"
+# Read the target URL from the .lnk file
+$WshShell = New-Object -ComObject WScript.Shell
+$shortcut = $WshShell.CreateShortcut($readmeShortcut.FullName)
+$targetUrl = $shortcut.TargetPath
 
-$readmeContent = Get-Content -Path $readmePath.FullName -Raw
+Write-Host "README URL: $targetUrl" -ForegroundColor Green
+Write-Log "README shortcut points to URL: $targetUrl"
 
 # ===============================
-# Clean README and log Critical Services
+# Download the README page
 # ===============================
-$cleanContent = $readmeContent -replace '<.*?>', ''
+try {
+  $webPage = Invoke-WebRequest -Uri $targetUrl -UseBasicParsing
+  $pageContent = $webPage.Content
+  Write-Host "Downloaded README page content." -ForegroundColor Cyan
+  Write-Log "Downloaded README page content successfully."
+}
+catch {
+  Write-Host "ERROR: Failed to download README page content." -ForegroundColor Red
+  Write-Log "ERROR: Failed to download README page content."
+  exit 1
+}
+
+# ===============================
+# Clean HTML and log preview
+# ===============================
+$cleanContent = $pageContent -replace '<.*?>', ''
 Write-Log "=== Cleaned README Content Preview ==="
 $cleanContent -split "`n" | ForEach-Object { Write-Log $_ }
 Write-Log "=== End README Preview ==="
 
-$criticalServices = ($cleanContent -split "Critical Services:")[1]
-if ($criticalServices) {
-  Write-Log "=== Critical Services Section ==="
-  $criticalServices -split "`n" | ForEach-Object { Write-Log $_ }
-  Write-Log "=== End Critical Services ==="
-}
-
 # ===============================
-# Parse Admins and Users from squished format
+# Parse Admins and Users
 # ===============================
 $authLineMatch = [regex]::Match($cleanContent, "Authorized Administrators:(.+)Authorized Users:(.+)", "Singleline")
 $adminsBlock = $authLineMatch.Groups[1].Value.Trim()
