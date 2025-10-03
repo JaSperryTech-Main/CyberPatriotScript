@@ -13,7 +13,7 @@ if (-not $isAdmin) {
 }
 
 Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  User Account Settings Configuration" -ForegroundColor Cyan
+Write-Host "  User Account Settings Configuration v2.10" -ForegroundColor Cyan
 Write-Host "======================================`n" -ForegroundColor Cyan
 
 # ===============================
