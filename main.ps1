@@ -1,8 +1,8 @@
 # main.ps1
-Write-Host "Running CyberPatriot Scripts..." -ForegroundColor Cyan
+Write-Host "Fetching and running CyberPatriot scripts..." -ForegroundColor Cyan
 
-& "$PSScriptRoot\scripts\Set-LockoutPolicy.ps1"
-& "$PSScriptRoot\scripts\Set-PasswordPolicy.ps1"
-& "$PSScriptRoot\scripts\Set-UserAccountSettings.ps1"
+irm https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-LockoutPolicy.ps1 | iex
+irm https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-PasswordPolicy.ps1 | iex
+irm https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-UserAccountSettings.ps1 | iex
 
-Write-Host "All scripts completed!" -ForegroundColor Green
+Write-Host "All remote scripts completed!" -ForegroundColor Green
