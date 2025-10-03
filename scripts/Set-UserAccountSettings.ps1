@@ -28,7 +28,6 @@ function Write-Log {
   "$timestamp - $Message" | Out-File -FilePath $logPath -Append -Encoding UTF8
 }
 
-
 # ===============================
 # Locate CyberPatriot README
 # ===============================
@@ -53,17 +52,20 @@ Write-Log "Found README at path: $($readmePath.FullName)"
 $readmeContent = Get-Content -Path $readmePath.FullName -Raw
 
 # ===============================
-# Parse Critical Services section
+# Log Critical Services section
 # ===============================
 $criticalServices = ($readmeContent -split "Critical Services:")[1]
+Write-Host "`nLogging Critical Services section..." -ForegroundColor Cyan
+Write-Log "=== Critical Services Section ==="
+$criticalServices -split "`n" | ForEach-Object { Write-Log $_ }
+Write-Log "=== End Critical Services ==="
 
-# Extract Administrators block
+# ===============================
+# Parse Administrators and Users
+# ===============================
 $adminsBlock = [regex]::Match($criticalServices, "Authorized Administrators:(.+?)Authorized Users:", "Singleline").Groups[1].Value.Trim()
-
-# Extract Users block
 $usersBlock = [regex]::Match($criticalServices, "Authorized Users:(.+)", "Singleline").Groups[1].Value.Trim()
 
-# Parse administrators into dictionary of username → password
 $authorizedAdmins = @()
 $adminPasswordMap = @{}
 $adminMatches = [regex]::Matches($adminsBlock, "(\w+)\s+password:\s+(\S+)")
@@ -74,21 +76,17 @@ foreach ($m in $adminMatches) {
   $adminPasswordMap[$username] = $password
 }
 
-# Parse users into array
 $authorizedUsers = $usersBlock -split "\s+" | Where-Object { $_ -match "^\w+$" }
 
-Write-Host "`nAuthorized Administrators:" -ForegroundColor Cyan
-Write-Log "Authorized Administrators:"
+# Log what was parsed
+Write-Log "`n=== Parsed Authorized Administrators ==="
 foreach ($u in $authorizedAdmins) {
-  Write-Host " - $u (pw: $($adminPasswordMap[$u]))" -ForegroundColor White
-  Write-Log " - $u (pw: $($adminPasswordMap[$u]))"
+  Write-Log "Admin: $u - Password: $($adminPasswordMap[$u])"
 }
 
-Write-Host "`nAuthorized Users:" -ForegroundColor Yellow
-Write-Log "Authorized Users:"
+Write-Log "`n=== Parsed Authorized Users ==="
 foreach ($u in $authorizedUsers) {
-  Write-Host " - $u" -ForegroundColor White
-  Write-Log " - $u"
+  Write-Log "User: $u"
 }
 
 # Combine all authorized accounts
@@ -112,9 +110,8 @@ foreach ($user in $allUsers) {
   Write-Log "User: $($user.Name)"
 
   if ($allAuthorized -contains $user.Name) {
-    # AUTHORIZED
     Write-Host "  Status: AUTHORIZED" -ForegroundColor Green
-    Write-Log "  Status: AUTHORIZED"
+    Write-Log "  Status: AUTHORIZED (found in parsed README)"
 
     if (-not $user.Enabled) {
       Write-Host "  Action: Enabling account..." -ForegroundColor Cyan
@@ -122,7 +119,6 @@ foreach ($user in $allUsers) {
       Enable-LocalUser -Name $user.Name
     }
 
-    # If admin, reset password from README
     if ($authorizedAdmins -contains $user.Name) {
       $plainPassword = $adminPasswordMap[$user.Name]
       if ($plainPassword) {
@@ -133,16 +129,14 @@ foreach ($user in $allUsers) {
       }
     }
 
-    # Force password change at next logon
     net user $user.Name /logonpasswordchg:yes | Out-Null
     Set-LocalUser -Name $user.Name -PasswordNeverExpires $false
     Write-Host "  Result: Password change required at next logon" -ForegroundColor Green
     Write-Log "  Result: Password change required at next logon"
   }
   else {
-    # UNAUTHORIZED
     Write-Host "  Status: UNAUTHORIZED" -ForegroundColor Red
-    Write-Log "  Status: UNAUTHORIZED"
+    Write-Log "  Status: UNAUTHORIZED (not found in parsed README)"
 
     if ($user.Enabled) {
       Write-Host "  Action: Disabling account..." -ForegroundColor Cyan
@@ -165,12 +159,6 @@ Write-Host "`n" + "=" * 60 -ForegroundColor Gray
 Write-Host "`nFinal Account Status Report:" -ForegroundColor Cyan
 Write-Host "=" * 60 -ForegroundColor Gray
 Write-Log "Final Account Status Report:"
-
-$allUsers = Get-LocalUser | Where-Object {
-  $_.Name -notlike "DefaultAccount" -and
-  $_.Name -notlike "Guest" -and
-  $_.Name -notlike "WDAGUtilityAccount"
-}
 
 foreach ($user in $allUsers) {
   $status = if ($user.Enabled) { "ENABLED" } else { "DISABLED" }
@@ -200,4 +188,3 @@ Write-Log "Script execution complete. Log closed."
 
 # Auto-open the log in Notepad
 Start-Process notepad.exe $logPath
-
