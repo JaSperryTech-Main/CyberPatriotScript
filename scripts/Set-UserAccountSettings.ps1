@@ -1,10 +1,10 @@
-# Script: CyberPatriot User Account Configuration
-# Windows Server 2019
+# Script: CyberPatriot User Account Configuration (cleaned for VSCode/PSScriptAnalyzer)
+# Windows Server 2019/2022
 # Run as Administrator
 
-# ===============================
-# Check if running as Administrator
-# ===============================
+# -----------------------
+# Admin check
+# -----------------------
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
@@ -12,13 +12,9 @@ if (-not $isAdmin) {
   exit 1
 }
 
-Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  CyberPatriot User Account Configuration" -ForegroundColor Cyan
-Write-Host "======================================`n" -ForegroundColor Cyan
-
-# ===============================
-# Setup Logging
-# ===============================
+# -----------------------
+# Logging setup (Downloads)
+# -----------------------
 $logPath = "$env:USERPROFILE\Downloads\CyberPatriot_UserConfig.log"
 "=== CyberPatriot User Config Log - $(Get-Date) ===" | Out-File -FilePath $logPath -Encoding UTF8
 
@@ -28,155 +24,213 @@ function Write-Log {
   "$timestamp - $Message" | Out-File -FilePath $logPath -Append -Encoding UTF8
 }
 
-# ===============================
-# Download README page
-# ===============================
-$readmeUrl = "https://www.uscyberpatriot.org/Pages/Readme/cp18_tr_e_server2019_readme_43wk0c7220pu1.aspx"
+Write-Host "Starting CyberPatriot README parse + user enforcement..." -ForegroundColor Cyan
+Write-Log "Start run."
+
+# -----------------------
+# Find .lnk (if present) or fallback URL
+# -----------------------
+$desktopPaths = @(
+  [Environment]::GetFolderPath("Desktop"),
+  "$env:PUBLIC\Desktop"
+)
+
+$readmeShortcut = $desktopPaths | ForEach-Object {
+  Get-ChildItem -Path $_ -Filter "*CyberPatriot*README*.lnk" -ErrorAction SilentlyContinue
+} | Select-Object -First 1
+
+$fallbackUrl = "https://www.uscyberpatriot.org/Pages/Readme/cp18_tr_e_server2019_readme_43wk0c7220pu1.aspx"
+
+if ($readmeShortcut) {
+  try {
+    $WshShell = New-Object -ComObject WScript.Shell
+    $shortcut = $WshShell.CreateShortcut($readmeShortcut.FullName)
+    $targetUrl = $shortcut.TargetPath
+    if (-not $targetUrl) { $targetUrl = $shortcut.Arguments }
+    Write-Host "Found README shortcut -> $($readmeShortcut.FullName)" -ForegroundColor Green
+    Write-Log "Found README shortcut: $($readmeShortcut.FullName)"
+    Write-Log "Extracted target: $targetUrl"
+  }
+  catch {
+    Write-Host "Warning: failed to read .lnk, will use fallback URL." -ForegroundColor Yellow
+    Write-Log "Failed to read .lnk: $_"
+    $targetUrl = $fallbackUrl
+  }
+}
+else {
+  Write-Host "README shortcut not found; using fallback URL." -ForegroundColor Yellow
+  Write-Log "README shortcut not found."
+  $targetUrl = $fallbackUrl
+}
+
+# -----------------------
+# Download README page HTML
+# -----------------------
 try {
-  $webPage = Invoke-WebRequest -Uri $readmeUrl -UseBasicParsing
-  $pageContent = $webPage.Content
-  Write-Host "Downloaded README page content." -ForegroundColor Cyan
-  Write-Log "Downloaded README page content successfully."
+  Write-Host "Downloading README from: $targetUrl" -ForegroundColor Cyan
+  Write-Log "Downloading README from: $targetUrl"
+  $webPage = Invoke-WebRequest -Uri $targetUrl -UseBasicParsing -ErrorAction Stop
+  $pageHtml = $webPage.Content
+  Write-Log "Download success; HTML length: $($pageHtml.Length)"
 }
 catch {
-  Write-Host "ERROR: Failed to download README page content." -ForegroundColor Red
-  Write-Log "ERROR: Failed to download README page content."
+  Write-Host "ERROR: Failed to download page: $_" -ForegroundColor Red
+  Write-Log "ERROR: Failed to download page: $_"
   exit 1
 }
 
-# ===============================
-# Clean HTML and log preview
-# ===============================
-$cleanContent = $pageContent -replace '<.*?>', ''
-Write-Log "=== Cleaned README Content Preview ==="
-$cleanContent -split "`n" | ForEach-Object { Write-Log $_ }
-Write-Log "=== End README Preview ==="
+# -----------------------
+# Extract <pre> block
+# -----------------------
+$preMatch = [regex]::Match($pageHtml, "<pre\b[^>]*>([\s\S]*?)</pre>", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+if ($preMatch.Success) {
+  $preContent = $preMatch.Groups[1].Value.Trim()
+  Write-Log "Extracted <pre> block from HTML."
+}
+else {
+  $idx = $pageHtml.IndexOf("Authorized Administrators", [System.StringComparison]::InvariantCultureIgnoreCase)
+  if ($idx -ge 0) {
+    $start = [Math]::Max(0, $idx - 200)
+    $len = [Math]::Min($pageHtml.Length - $start, 1000)
+    $preContent = $pageHtml.Substring($start, $len)
+  }
+  else {
+    Write-Host "ERROR: Could not find the Admins/Users content on the page." -ForegroundColor Red
+    Write-Log "ERROR: Admins/Users block not found in page."
+    exit 1
+  }
+}
 
-# ===============================
-# Parse Admins and Users
-# ===============================
-$authLineMatch = [regex]::Match($cleanContent, "Authorized Administrators:(.+)Authorized Users:(.+)", "Singleline")
-$adminsBlock = $authLineMatch.Groups[1].Value.Trim()
-$usersBlock = $authLineMatch.Groups[2].Value.Trim()
+# Clean HTML tags
+$cleanPre = $preContent -replace '<.*?>', ''
+$cleanPre = $cleanPre -replace "[`r`n]+", " "
+$cleanPre = $cleanPre.Trim()
+Write-Log "=== Extracted and cleaned PRE content ==="
+Write-Log $cleanPre
+Write-Log "=== End PRE content ==="
 
-# Parse Admins
+# -----------------------
+# Parse Authorized Administrators
+# -----------------------
+$adminPattern = '(?i)(\w+)(?:\s*\(you\))?\s*password:\s*([^\s<>]+?)(?=(?:\w+(?:\s*\(you\))?\s+password:)|Authorized Users:|$)'
+
 $authorizedAdmins = @()
 $adminPasswordMap = @{}
-$adminPattern = "(\w+)(?:\s*\(you\))?\s*password:\s*([^\s]+)"
-$adminMatches = [regex]::Matches($adminsBlock, $adminPattern)
+
+$adminMatches = [regex]::Matches($cleanPre, $adminPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
 foreach ($m in $adminMatches) {
-  $username = $m.Groups[1].Value
-  $password = $m.Groups[2].Value
-  $authorizedAdmins += $username
-  $adminPasswordMap[$username] = $password
+  $user = $m.Groups[1].Value
+  $plainPassword = $m.Groups[2].Value.Trim()
+  $authorizedAdmins += $user
+  $adminPasswordMap[$user] = $plainPassword
 }
 
-# Parse Users
-$usersBlockClean = $usersBlock -replace '[^a-zA-Z0-9]', ' '
-$authorizedUsers = $usersBlockClean -split '\s+' | Where-Object { $_ -match '^\w+$' }
+Write-Log "Parsed authorized admins count: $($authorizedAdmins.Count)"
+foreach ($a in $authorizedAdmins) { Write-Log "Admin: $a / pwd: $($adminPasswordMap[$a])" }
 
-# Log parsed admins/users
-Write-Log "`n=== Parsed Authorized Administrators ==="
-foreach ($a in $authorizedAdmins) { Write-Log "Admin: $a - Password: $($adminPasswordMap[$a])" }
-Write-Log "`n=== Parsed Authorized Users ==="
-foreach ($u in $authorizedUsers) { Write-Log "User: $u" }
+# -----------------------
+# Parse Authorized Users
+# -----------------------
+$usersMatch = [regex]::Match($cleanPre, 'Authorized Users:(.+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+$authorizedUsers = @()
+if ($usersMatch.Success) {
+  $rawUsers = $usersMatch.Groups[1].Value
+  $usersClean = $rawUsers -replace '[^A-Za-z0-9]', ' '
+  $authorizedUsers = ($usersClean -split '\s+') | Where-Object { $_ -match '^\w+$' }
+  Write-Log "Parsed authorized users count: $($authorizedUsers.Count)"
+  foreach ($u in $authorizedUsers) { Write-Log "User: $u" }
+}
+else {
+  Write-Log "No 'Authorized Users:' block found in extracted content."
+}
 
-# Combine all authorized accounts
 $allAuthorized = $authorizedAdmins + $authorizedUsers
 
-# ===============================
+# -----------------------
 # Process Local Users
-# ===============================
+# -----------------------
 $allUsers = Get-LocalUser | Where-Object {
-  $_.Name -notlike "DefaultAccount" -and
-  $_.Name -notlike "Guest" -and
-  $_.Name -notlike "WDAGUtilityAccount"
+  $_.Name -notlike "DefaultAccount" -and $_.Name -notlike "Guest" -and $_.Name -notlike "WDAGUtilityAccount"
 }
 
-Write-Host "`nProcessing User Accounts..." -ForegroundColor Cyan
-Write-Host "=" * 60 -ForegroundColor Gray
-Write-Log "Processing Local Users..."
+Write-Host "`nProcessing local user accounts..." -ForegroundColor Cyan
+Write-Log "Processing local user accounts - total found: $($allUsers.Count)"
 
 foreach ($user in $allUsers) {
-  Write-Host "`nUser: $($user.Name)" -ForegroundColor Yellow
-  Write-Log "User: $($user.Name)"
+  $uname = $user.Name
+  $isAuthorized = $allAuthorized -contains $uname
+  Write-Host "`nUser: $uname" -ForegroundColor Yellow
+  Write-Log "User encountered: $uname (Enabled: $($user.Enabled))"
 
-  if ($allAuthorized -contains $user.Name) {
+  if ($isAuthorized) {
     Write-Host "  Status: AUTHORIZED" -ForegroundColor Green
     Write-Log "  Status: AUTHORIZED (found in parsed README)"
 
     if (-not $user.Enabled) {
-      Write-Host "  Action: Enabling account..." -ForegroundColor Cyan
-      Write-Log "  Action: Enabling account..."
-      Enable-LocalUser -Name $user.Name
+      Write-Host "  Enabling account..." -ForegroundColor Cyan
+      Write-Log "  Action: Enabling account"
+      Enable-LocalUser -Name $uname
     }
 
-    if ($authorizedAdmins -contains $user.Name) {
-      $plainPassword = $adminPasswordMap[$user.Name]
+    if ($authorizedAdmins -contains $uname) {
+      $plainPassword = $adminPasswordMap[$uname]
       if ($plainPassword) {
-        $securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
-        Set-LocalUser -Name $user.Name -Password $securePassword
-        Write-Host "  Action: Password reset for admin $($user.Name)" -ForegroundColor Cyan
-        Write-Log "  Action: Password reset for admin $($user.Name)"
+        try {
+          $securePwd = ConvertTo-SecureString $plainPassword -AsPlainText -Force
+          Set-LocalUser -Name $uname -Password $securePwd
+          Write-Host "  Password reset for admin $uname" -ForegroundColor Cyan
+          Write-Log "  Action: Password reset for admin $uname"
+        }
+        catch {
+          Write-Host "  Failed to reset password for $uname: $_" -ForegroundColor Red
+          Write-Log "  ERROR: Failed to reset password for $uname: $_"
+        }
+      }
+      else {
+        Write-Log "  No password found in README for admin $uname"
       }
     }
 
-    net user $user.Name /logonpasswordchg:yes | Out-Null
-    Set-LocalUser -Name $user.Name -PasswordNeverExpires $false
-    Write-Host "  Result: Password change required at next logon" -ForegroundColor Green
-    Write-Log "  Result: Password change required at next logon"
+    try {
+      net user $uname /logonpasswordchg:yes | Out-Null
+      Set-LocalUser -Name $uname -PasswordNeverExpires $false
+      Write-Host "  Password change required at next logon" -ForegroundColor Green
+      Write-Log "  Result: Password change required at next logon"
+    }
+    catch {
+      Write-Log "  ERROR applying password flags for $uname: $_"
+    }
   }
   else {
     Write-Host "  Status: UNAUTHORIZED" -ForegroundColor Red
-    Write-Log "  Status: UNAUTHORIZED (not found in parsed README)"
+    Write-Log "  Status: UNAUTHORIZED (not found in README)"
 
     if ($user.Enabled) {
-      Write-Host "  Action: Disabling account..." -ForegroundColor Cyan
-      Write-Log "  Action: Disabling account..."
-      Disable-LocalUser -Name $user.Name
-      Write-Host "  Result: Account DISABLED" -ForegroundColor Red
+      Write-Host "  Disabling account..." -ForegroundColor Cyan
+      Write-Log "  Action: Disabling account"
+      Disable-LocalUser -Name $uname
+      Write-Host "  Account disabled" -ForegroundColor Red
       Write-Log "  Result: Account DISABLED"
     }
     else {
-      Write-Host "  Result: Account already disabled" -ForegroundColor Gray
-      Write-Log "  Result: Account already disabled"
+      Write-Log "  Account already disabled"
     }
   }
 }
 
-# ===============================
-# Final Report
-# ===============================
-Write-Host "`n" + "=" * 60 -ForegroundColor Gray
+# -----------------------
+# Final report
+# -----------------------
 Write-Host "`nFinal Account Status Report:" -ForegroundColor Cyan
-Write-Host "=" * 60 -ForegroundColor Gray
 Write-Log "Final Account Status Report:"
-
 foreach ($user in $allUsers) {
   $status = if ($user.Enabled) { "ENABLED" } else { "DISABLED" }
-  $color = if ($user.Enabled) { "Green" } else { "Red" }
   $authorized = if ($allAuthorized -contains $user.Name) { "[AUTHORIZED]" } else { "[UNAUTHORIZED]" }
-
-  Write-Host "$($user.Name.PadRight(20)) - $status $authorized" -ForegroundColor $color
-  Write-Log "$($user.Name.PadRight(20)) - $status $authorized"
+  $line = "{0,-20} - {1} {2}" -f $user.Name, $status, $authorized
+  Write-Host $line -ForegroundColor (if ($user.Enabled) { "Green" } else { "Red" })
+  Write-Log $line
 }
 
-Write-Host "`nConfiguration Complete!" -ForegroundColor Green
-Write-Log "Configuration Complete!"
-
-Write-Host "`nSummary:" -ForegroundColor Cyan
-Write-Host "  - Authorized users: Enabled, password change required at next logon" -ForegroundColor White
-Write-Host "  - Authorized admins: Passwords reset from README + change required" -ForegroundColor White
-Write-Host "  - Unauthorized users: Accounts disabled" -ForegroundColor White
-
-Write-Log "Summary:"
-Write-Log "  - Authorized users: Enabled, password change required at next logon"
-Write-Log "  - Authorized admins: Passwords reset from README + change required"
-Write-Log "  - Unauthorized users: Accounts disabled"
-
-Write-Host "`n======================================" -ForegroundColor Cyan
-Write-Host "Log file saved to: $logPath" -ForegroundColor Yellow
-Write-Log "Script execution complete. Log closed."
-
-# Auto-open the log in Notepad
+Write-Log "Script execution complete."
+Write-Host "`nLog file saved to: $logPath" -ForegroundColor Yellow
 Start-Process notepad.exe $logPath
