@@ -7,7 +7,6 @@
 # ===============================
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
 if (-not $isAdmin) {
   Write-Host "ERROR: This script must be run as Administrator!" -ForegroundColor Red
   exit 1
@@ -16,6 +15,18 @@ if (-not $isAdmin) {
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host "  User Account Settings Configuration" -ForegroundColor Cyan
 Write-Host "======================================`n" -ForegroundColor Cyan
+
+# ===============================
+# Setup Logging
+# ===============================
+$logPath = "$env:USERPROFILE\Desktop\CyberPatriot_UserConfig.log"
+"=== CyberPatriot User Config Log - $(Get-Date) ===" | Out-File -FilePath $logPath -Encoding UTF8
+
+function Write-Log {
+  param([string]$Message)
+  $timestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+  "$timestamp - $Message" | Out-File -FilePath $logPath -Append -Encoding UTF8
+}
 
 # ===============================
 # Locate CyberPatriot README
@@ -31,10 +42,13 @@ $readmePath = $desktopPaths | ForEach-Object {
 
 if (-not $readmePath) {
   Write-Host "ERROR: CyberPatriot README not found on Desktop!" -ForegroundColor Red
+  Write-Log "ERROR: CyberPatriot README not found on Desktop!"
   exit 1
 }
 
 Write-Host "Found README: $($readmePath.FullName)" -ForegroundColor Green
+Write-Log "Found README at path: $($readmePath.FullName)"
+
 $readmeContent = Get-Content -Path $readmePath.FullName -Raw
 
 # ===============================
@@ -44,13 +58,13 @@ $criticalServices = ($readmeContent -split "Critical Services:")[1]
 
 # Extract Administrators block
 $adminsBlock = [regex]::Match($criticalServices, "Authorized Administrators:(.+?)Authorized Users:", "Singleline").Groups[1].Value.Trim()
+
 # Extract Users block
 $usersBlock = [regex]::Match($criticalServices, "Authorized Users:(.+)", "Singleline").Groups[1].Value.Trim()
 
 # Parse administrators into dictionary of username → password
 $authorizedAdmins = @()
 $adminPasswordMap = @{}
-
 $adminMatches = [regex]::Matches($adminsBlock, "(\w+)\s+password:\s+(\S+)")
 foreach ($m in $adminMatches) {
   $username = $m.Groups[1].Value
@@ -63,13 +77,17 @@ foreach ($m in $adminMatches) {
 $authorizedUsers = $usersBlock -split "\s+" | Where-Object { $_ -match "^\w+$" }
 
 Write-Host "`nAuthorized Administrators:" -ForegroundColor Cyan
+Write-Log "Authorized Administrators:"
 foreach ($u in $authorizedAdmins) {
   Write-Host " - $u (pw: $($adminPasswordMap[$u]))" -ForegroundColor White
+  Write-Log " - $u (pw: $($adminPasswordMap[$u]))"
 }
 
 Write-Host "`nAuthorized Users:" -ForegroundColor Yellow
+Write-Log "Authorized Users:"
 foreach ($u in $authorizedUsers) {
   Write-Host " - $u" -ForegroundColor White
+  Write-Log " - $u"
 }
 
 # Combine all authorized accounts
@@ -86,16 +104,20 @@ $allUsers = Get-LocalUser | Where-Object {
 
 Write-Host "`nProcessing User Accounts..." -ForegroundColor Cyan
 Write-Host "=" * 60 -ForegroundColor Gray
+Write-Log "Processing Local Users..."
 
 foreach ($user in $allUsers) {
   Write-Host "`nUser: $($user.Name)" -ForegroundColor Yellow
+  Write-Log "User: $($user.Name)"
 
   if ($allAuthorized -contains $user.Name) {
     # AUTHORIZED
     Write-Host "  Status: AUTHORIZED" -ForegroundColor Green
+    Write-Log "  Status: AUTHORIZED"
 
     if (-not $user.Enabled) {
       Write-Host "  Action: Enabling account..." -ForegroundColor Cyan
+      Write-Log "  Action: Enabling account..."
       Enable-LocalUser -Name $user.Name
     }
 
@@ -106,6 +128,7 @@ foreach ($user in $allUsers) {
         $securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
         Set-LocalUser -Name $user.Name -Password $securePassword
         Write-Host "  Action: Password reset for admin $($user.Name)" -ForegroundColor Cyan
+        Write-Log "  Action: Password reset for admin $($user.Name)"
       }
     }
 
@@ -113,17 +136,23 @@ foreach ($user in $allUsers) {
     net user $user.Name /logonpasswordchg:yes | Out-Null
     Set-LocalUser -Name $user.Name -PasswordNeverExpires $false
     Write-Host "  Result: Password change required at next logon" -ForegroundColor Green
+    Write-Log "  Result: Password change required at next logon"
   }
   else {
     # UNAUTHORIZED
     Write-Host "  Status: UNAUTHORIZED" -ForegroundColor Red
+    Write-Log "  Status: UNAUTHORIZED"
+
     if ($user.Enabled) {
       Write-Host "  Action: Disabling account..." -ForegroundColor Cyan
+      Write-Log "  Action: Disabling account..."
       Disable-LocalUser -Name $user.Name
       Write-Host "  Result: Account DISABLED" -ForegroundColor Red
+      Write-Log "  Result: Account DISABLED"
     }
     else {
       Write-Host "  Result: Account already disabled" -ForegroundColor Gray
+      Write-Log "  Result: Account already disabled"
     }
   }
 }
@@ -134,6 +163,7 @@ foreach ($user in $allUsers) {
 Write-Host "`n" + "=" * 60 -ForegroundColor Gray
 Write-Host "`nFinal Account Status Report:" -ForegroundColor Cyan
 Write-Host "=" * 60 -ForegroundColor Gray
+Write-Log "Final Account Status Report:"
 
 $allUsers = Get-LocalUser | Where-Object {
   $_.Name -notlike "DefaultAccount" -and
@@ -147,11 +177,20 @@ foreach ($user in $allUsers) {
   $authorized = if ($allAuthorized -contains $user.Name) { "[AUTHORIZED]" } else { "[UNAUTHORIZED]" }
 
   Write-Host "$($user.Name.PadRight(20)) - $status $authorized" -ForegroundColor $color
+  Write-Log "$($user.Name.PadRight(20)) - $status $authorized"
 }
 
 Write-Host "`nConfiguration Complete!" -ForegroundColor Green
+Write-Log "Configuration Complete!"
+
 Write-Host "`nSummary:" -ForegroundColor Cyan
 Write-Host "  - Authorized users: Enabled, password change required at next logon" -ForegroundColor White
 Write-Host "  - Authorized admins: Passwords reset from README + change required" -ForegroundColor White
 Write-Host "  - Unauthorized users: Accounts disabled" -ForegroundColor White
+
+Write-Log "Summary:"
+Write-Log "  - Authorized users: Enabled, password change required at next logon"
+Write-Log "  - Authorized admins: Passwords reset from README + change required"
+Write-Log "  - Unauthorized users: Accounts disabled"
+
 Write-Host "`n======================================" -ForegroundColor Cyan
