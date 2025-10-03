@@ -1,6 +1,6 @@
-# Script 3: User Account Settings Configuration (Automated via README Shortcut)
-# Windows Server 2019/2022
-# Must be run with Administrator privileges
+# Script: CyberPatriot User Account Configuration
+# Windows Server 2019
+# Run as Administrator
 
 # ===============================
 # Check if running as Administrator
@@ -13,7 +13,7 @@ if (-not $isAdmin) {
 }
 
 Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  User Account Settings Configuration v2.10" -ForegroundColor Cyan
+Write-Host "  CyberPatriot User Account Configuration" -ForegroundColor Cyan
 Write-Host "======================================`n" -ForegroundColor Cyan
 
 # ===============================
@@ -29,36 +29,11 @@ function Write-Log {
 }
 
 # ===============================
-# Locate CyberPatriot README shortcut (.lnk)
+# Download README page
 # ===============================
-$desktopPaths = @(
-  [Environment]::GetFolderPath("Desktop"),
-  "$env:PUBLIC\Desktop"
-)
-
-$readmeShortcut = $desktopPaths | ForEach-Object {
-  Get-ChildItem -Path $_ -Filter "*CyberPatriot*README*.lnk" -ErrorAction SilentlyContinue
-} | Select-Object -First 1
-
-if (-not $readmeShortcut) {
-  Write-Host "ERROR: CyberPatriot README shortcut not found!" -ForegroundColor Red
-  Write-Log "ERROR: CyberPatriot README shortcut not found!"
-  exit 1
-}
-
-# Read the target URL from the .lnk file
-$WshShell = New-Object -ComObject WScript.Shell
-$shortcut = $WshShell.CreateShortcut($readmeShortcut.FullName)
-$targetUrl = $shortcut.TargetPath
-
-Write-Host "README URL: $targetUrl" -ForegroundColor Green
-Write-Log "README shortcut points to URL: $targetUrl"
-
-# ===============================
-# Download the README page
-# ===============================
+$readmeUrl = "https://www.uscyberpatriot.org/Pages/Readme/cp18_tr_e_server2019_readme_43wk0c7220pu1.aspx"
 try {
-  $webPage = Invoke-WebRequest -Uri $targetUrl -UseBasicParsing
+  $webPage = Invoke-WebRequest -Uri $readmeUrl -UseBasicParsing
   $pageContent = $webPage.Content
   Write-Host "Downloaded README page content." -ForegroundColor Cyan
   Write-Log "Downloaded README page content successfully."
