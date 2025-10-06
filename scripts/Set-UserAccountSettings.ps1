@@ -120,7 +120,7 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
   }
 }
 
-Write-Log "Parsed admins: $($authorizedAdmins -join ', ')"
+Write-Log ("Parsed admins: " + ($authorizedAdmins -join ', '))
 
 # -----------------------
 # Parse Authorized Users
@@ -130,66 +130,103 @@ if ($cleanPre -match '(?is)Authorized Users:(.*)') {
   $block = $matches[1]
   $usersClean = ($block -replace '[^A-Za-z0-9\-_\.`n]', ' ') -replace "`n", " "
   $authorizedUsers = ($usersClean -split '\s+') | Where-Object { $_ -ne '' -and $_ -notmatch '(?i)^password$' }
-  Write-Log "Parsed users: $($authorizedUsers -join ', ')"
+  Write-Log ("Parsed users: " + ($authorizedUsers -join ', '))
 }
 
 $allAuthorized = $authorizedAdmins + $authorizedUsers
 
 # -----------------------
-# Process Local Users
+# PROMPT: Ask for single password to apply to all authorized accounts
+# -----------------------
+function Convert-SecureStringToPlain {
+  param([System.Security.SecureString]$s)
+  if (-not $s) { return $null }
+  $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
+  try { return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+  finally { if ($bstr -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) } }
+}
+
+# Read & confirm password (secure)
+while ($true) {
+  $pw1 = Read-Host "Enter the password to set for ALL authorized accounts (input hidden)" -AsSecureString
+  $pw2 = Read-Host "Confirm password" -AsSecureString
+
+  $plain1 = Convert-SecureStringToPlain $pw1
+  $plain2 = Convert-SecureStringToPlain $pw2
+
+  if ($plain1 -eq $plain2 -and $plain1 -ne $null -and $plain1.Length -gt 0) {
+    # store secure string for later use, but avoid logging the plaintext
+    $Global:UniformPasswordSecure = $pw1
+    # clear plaintext copies from memory ASAP
+    $plain1 = $null
+    $plain2 = $null
+    break
+  }
+  else {
+    Write-Host "Passwords did not match or were empty — try again." -ForegroundColor Yellow
+  }
+}
+
+Write-Log "Uniform password captured for application to authorized accounts."
+
+# -----------------------
+# Process Local Users (apply uniform password to authorized accounts)
 # -----------------------
 $allUsers = Get-LocalUser | Where-Object { $_.Name -notlike "DefaultAccount" -and $_.Name -notlike "Guest" -and $_.Name -notlike "WDAGUtilityAccount" }
 
 Write-Host "`nProcessing local users..." -ForegroundColor Cyan
-Write-Log "Processing local users, count: $($allUsers.Count)"
+Write-Log ("Processing local users, count: " + $allUsers.Count)
 
 foreach ($user in $allUsers) {
   $uname = $user.Name
+  $unameBraced = "{" + $uname + "}"
   $isAuth = $allAuthorized -contains $uname
-  Write-Host "`nUser: $uname" -ForegroundColor Yellow
-  Write-Log "User: $uname, Enabled=$($user.Enabled)"
+  Write-Host "`nUser: $unameBraced" -ForegroundColor Yellow
+  Write-Log ("User: " + $unameBraced + ", Enabled=" + $user.Enabled)
 
   if ($isAuth) {
     Write-Host "  Status: AUTHORIZED" -ForegroundColor Green
-    Write-Log "Authorized"
+    Write-Log ("Authorized: " + $unameBraced)
 
     if (-not $user.Enabled) {
       Enable-LocalUser -Name $uname
-      Write-Host "  Enabled account" -ForegroundColor Cyan
-      Write-Log "Enabled account"
+      Write-Host ("  Enabled account " + $unameBraced) -ForegroundColor Cyan
+      Write-Log ("Enabled account " + $unameBraced)
     }
 
-    if ($authorizedAdmins -contains $uname) {
-      $pwd = $adminPasswordMap[$uname]
-      if ($pwd) {
-        try {
-          $secure = ConvertTo-SecureString $pwd -AsPlainText -Force
-          Set-LocalUser -Name $uname -Password $secure
-          Write-Host "  Reset admin password" -ForegroundColor Cyan
-          Write-Log "Reset admin password"
-        }
-        catch { Write-Host "  Failed password reset: $_" -ForegroundColor Red; Write-Log "Failed password reset: $_" }
-      }
+    # Set the uniform password for all authorized accounts (admins + users)
+    try {
+      Set-LocalUser -Name $uname -Password $Global:UniformPasswordSecure
+      Write-Host ("  Password set for " + $unameBraced) -ForegroundColor Cyan
+      Write-Log ("Password set for " + $unameBraced)
+    }
+    catch {
+      Write-Host ("  Failed to set password for " + $unameBraced + ": $_") -ForegroundColor Red
+      Write-Log ("Failed to set password for " + $unameBraced + ": $_")
     }
 
+    # Enforce change at next logon and disable password never expires
     try {
       net user $uname /logonpasswordchg:yes | Out-Null
       Set-LocalUser -Name $uname -PasswordNeverExpires $false
-      Write-Host "  Require password change at next logon" -ForegroundColor Green
-      Write-Log "Require password change at next logon"
+      Write-Host ("  Require password change at next logon for " + $unameBraced) -ForegroundColor Green
+      Write-Log ("Require password change at next logon for " + $unameBraced)
     }
-    catch { Write-Host "  Could not enforce password change: $_" -ForegroundColor Yellow; Write-Log "Could not enforce password change: $_" }
+    catch {
+      Write-Host ("  Could not enforce password change for " + $unameBraced + ": $_") -ForegroundColor Yellow
+      Write-Log ("Could not enforce password change for " + $unameBraced + ": $_")
+    }
   }
   else {
     Write-Host "  Status: UNAUTHORIZED" -ForegroundColor Red
-    Write-Log "Unauthorized"
+    Write-Log ("Unauthorized: " + $unameBraced)
 
     if ($user.Enabled) {
       Disable-LocalUser -Name $uname
-      Write-Host "  Disabled account" -ForegroundColor Red
-      Write-Log "Disabled account"
+      Write-Host ("  Disabled account " + $unameBraced) -ForegroundColor Red
+      Write-Log ("Disabled account " + $unameBraced)
     }
-    else { Write-Log "Account already disabled" }
+    else { Write-Log ("Account already disabled: " + $unameBraced) }
   }
 }
 
@@ -199,9 +236,10 @@ foreach ($user in $allUsers) {
 Write-Host "`nFinal Account Status Report:" -ForegroundColor Cyan
 Write-Log "Final Report:"
 foreach ($user in $allUsers) {
+  $displayName = "{" + $user.Name + "}"
   $status = if ($user.Enabled) { "ENABLED" } else { "DISABLED" }
   $authorized = if ($allAuthorized -contains $user.Name) { "[AUTHORIZED]" } else { "[UNAUTHORIZED]" }
-  $line = "{0,-20} - {1} {2}" -f $user.Name, $status, $authorized
+  $line = "{0,-25} - {1} {2}" -f $displayName, $status, $authorized
   Write-Host $line -ForegroundColor (if ($user.Enabled) { "Green" } else { "Red" })
   Write-Log $line
 }
