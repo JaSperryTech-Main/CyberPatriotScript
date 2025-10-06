@@ -4,6 +4,28 @@
 # ------------------------
 Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
 
+# Self-elevate script if not running as Administrator
+$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Write-Host "Script is not running as Administrator. Attempting to relaunch with admin rights..." -ForegroundColor Yellow
+
+  # Relaunch the script as admin
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "powershell.exe"
+  $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+  $psi.Verb = "runas"
+  try {
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    exit
+  }
+  catch {
+    Write-Host "Failed to run as Administrator: $_" -ForegroundColor Red
+    exit 1
+  }
+}
+
+
 # -----------------------
 # Default GitHub repo & local folder
 # -----------------------
