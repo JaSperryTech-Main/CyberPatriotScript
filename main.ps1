@@ -1,56 +1,100 @@
-# main.ps1 - Auto-download and run all CyberPatriot scripts automatically
-
-Write-Host "Fetching and running all CyberPatriot scripts from GitHub..." -ForegroundColor Cyan
-
-# -----------------------
-# GitHub repo details
-# -----------------------
-$githubUser = "JaSperryTech-Main"
-$repo = "CyberPatriotScript"
-$branch = "main"
-$scriptsPath = "scripts"
-
-# Temp folder to store downloaded scripts
-$tempFolder = Join-Path $env:TEMP "CyberPatriotScripts"
-if (-not (Test-Path $tempFolder)) { New-Item -Path $tempFolder -ItemType Directory | Out-Null }
+# main.ps1
+# ------------------------
+# CyberPatriot Script Runner
+# ------------------------
+Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
 
 # -----------------------
-# Get list of scripts from GitHub
+# Default GitHub repo & local folder
 # -----------------------
-try {
-  $apiUrl = "https://api.github.com/repos/$githubUser/$repo/contents/$scriptsPath?ref=$branch"
-  $fileList = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -ErrorAction Stop
-  $psScripts = $fileList | Where-Object { $_.name -like "*.ps1" }
-  if ($psScripts.Count -eq 0) {
-    Write-Host "No scripts found in the GitHub repository." -ForegroundColor Red
-    exit 1
-  }
-}
-catch {
-  Write-Host "Failed to list scripts from GitHub: $_" -ForegroundColor Red
+$defaultRepo = "https://github.com/JaSperryTech-Main/CyberPatriotScript.git"
+$defaultDestination = "C:\CyberPatriotScripts"
+
+# -----------------------
+# Prompt for repo info with defaults
+# -----------------------
+$repoUrl = Read-Host "Enter GitHub repo URL (Press Enter for default: $defaultRepo)"
+if ([string]::IsNullOrWhiteSpace($repoUrl)) { $repoUrl = $defaultRepo }
+
+$destination = Read-Host "Enter local folder path (Press Enter for default: $defaultDestination)"
+if ([string]::IsNullOrWhiteSpace($destination)) { $destination = $defaultDestination }
+
+Write-Host "Using repo URL: $repoUrl"
+Write-Host "Using destination folder: $destination"
+
+# -----------------------
+# Check if git is installed
+# -----------------------
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Write-Host "Git is not installed. Please install Git before running this script." -ForegroundColor Red
   exit 1
 }
 
 # -----------------------
-# Download and run scripts
+# Clone repo if not exists
 # -----------------------
-foreach ($script in $psScripts) {
-  $url = $script.download_url
-  $localPath = Join-Path $tempFolder $script.name
+try {
+  if (-not (Test-Path $destination)) {
+    New-Item -Path $destination -ItemType Directory | Out-Null
+  }
 
+  if (-not (Test-Path (Join-Path $destination ".git"))) {
+    Write-Host "Cloning repository..." -ForegroundColor Cyan
+    git clone $repoUrl $destination
+    Write-Host "Repository cloned successfully!" -ForegroundColor Green
+  }
+  else {
+    Write-Host "Repository already exists. Skipping clone." -ForegroundColor Yellow
+  }
+}
+catch {
+  Write-Host "Failed to clone repository: $_" -ForegroundColor Red
+  exit 1
+}
+
+# -----------------------
+# Define scripts folder
+# -----------------------
+$scriptFolder = Join-Path -Path $destination -ChildPath "scripts"
+
+if (-not (Test-Path $scriptFolder)) {
+  Write-Host "Scripts folder not found at $scriptFolder" -ForegroundColor Red
+  exit 1
+}
+
+# -----------------------
+# Find all .ps1 scripts
+# -----------------------
+$scripts = Get-ChildItem -Path $scriptFolder -Filter *.ps1 | Sort-Object Name
+
+if ($scripts.Count -eq 0) {
+  Write-Host "No scripts found in $scriptFolder" -ForegroundColor Yellow
+  exit 1
+}
+
+# -----------------------
+# GUI checkbox selection
+# -----------------------
+$selected = $scripts | Select-Object Name, FullName |
+Out-GridView -Title "Select scripts to run (CTRL+Click for multiple)" -PassThru
+
+if (-not $selected) {
+  Write-Host "No scripts selected. Exiting..." -ForegroundColor Yellow
+  exit 0
+}
+
+# -----------------------
+# Run selected scripts
+# -----------------------
+foreach ($script in $selected) {
+  Write-Host "`nRunning $($script.Name)..." -ForegroundColor Cyan
   try {
-    # Download
-    Invoke-WebRequest -Uri $url -OutFile $localPath -UseBasicParsing -ErrorAction Stop
-    Write-Host "Downloaded $($script.name)" -ForegroundColor Green
-
-    # Run
-    Write-Host "Running $($script.name)..." -ForegroundColor Cyan
-    & $localPath
-    Write-Host "$($script.name) completed successfully!" -ForegroundColor Green
+    & $script.FullName
+    Write-Host "$($script.Name) completed successfully!" -ForegroundColor Green
   }
   catch {
-    Write-Host "Error with $($script.name): $_" -ForegroundColor Red
+    Write-Host "Error running $($script.Name): $_" -ForegroundColor Red
   }
 }
 
-Write-Host "`nAll scripts have been downloaded and executed!" -ForegroundColor Green
+Write-Host "`nAll selected scripts completed!" -ForegroundColor Green
