@@ -8,7 +8,7 @@ Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
 # Default GitHub repo & local folder
 # -----------------------
 $defaultRepo = "https://github.com/JaSperryTech-Main/CyberPatriotScript.git"
-$defaultDestination = "C:\CyberPatriotScripts"
+$defaultDestination = "$env:USERPROFILE\Downloads\CyberPatriotScripts"
 
 # -----------------------
 # Prompt for repo info with defaults
