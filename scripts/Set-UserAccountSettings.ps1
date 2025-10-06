@@ -80,49 +80,82 @@ catch {
 }
 
 # -----------------------
-# Extract <pre> block
+# Extract and clean README content robustly
 # -----------------------
-$preMatch = [regex]::Match($pageHtml, "<pre\b[^>]*>([\s\S]*?)</pre>", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-if ($preMatch.Success) {
-  $preContent = $preMatch.Groups[1].Value.Trim()
-  Write-Log "Extracted <pre> block from HTML."
-}
-else {
-  $idx = $pageHtml.IndexOf("Authorized Administrators", [System.StringComparison]::InvariantCultureIgnoreCase)
-  if ($idx -ge 0) {
-    $start = [Math]::Max(0, $idx - 200)
-    $len = [Math]::Min($pageHtml.Length - $start, 1000)
-    $preContent = $pageHtml.Substring($start, $len)
+try {
+  $preMatch = [regex]::Match($pageHtml, "(?is)<pre\b[^>]*>([\s\S]*?)</pre>")
+  if ($preMatch.Success) {
+    $rawBlock = $preMatch.Groups[1].Value
+    Write-Log "Found <pre> block."
   }
   else {
-    Write-Host "ERROR: Could not find the Admins/Users content on the page." -ForegroundColor Red
-    Write-Log "ERROR: Admins/Users block not found in page."
-    exit 1
+    $marker = [regex]::Match($pageHtml, "(?is)(Authorized Administrators:.*?)(Authorized Users:.*|$)")
+    if ($marker.Success) {
+      $rawBlock = $marker.Value
+      Write-Log "Found Admins/Users headings in page HTML."
+    }
+    else {
+      $dumpPath = "$env:USERPROFILE\Downloads\README_debug.html"
+      $pageHtml | Out-File -FilePath $dumpPath -Encoding UTF8
+      Write-Host "ERROR: Could not find the Admins/Users content. Saved HTML to: $dumpPath" -ForegroundColor Red
+      Write-Log "ERROR: Admins/Users block not found in page. Saved HTML to $dumpPath"
+      exit 1
+    }
   }
+
+  $cleanPre = $rawBlock -replace "<br\s*/?>", "`n" -replace "</p\s*>", "`n" -replace "<.*?>", ""
+  $cleanPre = $cleanPre -replace "`r`n", "`n" -replace "`r", "`n"
+  $cleanPre = $cleanPre.Trim()
+  Write-Log "Extracted and cleaned content length: $($cleanPre.Length)"
+  Write-Log "=== Extracted content preview (first 400 chars) ==="
+  Write-Log ($cleanPre.Substring(0, [Math]::Min(400, $cleanPre.Length)))
+}
+catch {
+  Write-Host "ERROR while extracting README: $_" -ForegroundColor Red
+  Write-Log "ERROR while extracting README: $_"
+  exit 1
 }
 
-# Clean HTML tags
-$cleanPre = $preContent -replace '<.*?>', ''
-$cleanPre = $cleanPre -replace "[`r`n]+", " "
-$cleanPre = $cleanPre.Trim()
-Write-Log "=== Extracted and cleaned PRE content ==="
-Write-Log $cleanPre
-Write-Log "=== End PRE content ==="
-
 # -----------------------
-# Parse Authorized Administrators
+# Parse Authorized Administrators (multi-line safe)
 # -----------------------
-$adminPattern = '(?i)(\w+)(?:\s*\(you\))?\s*password:\s*([^\s<>]+?)(?=(?:\w+(?:\s*\(you\))?\s+password:)|Authorized Users:|$)'
-
 $authorizedAdmins = @()
 $adminPasswordMap = @{}
 
-$adminMatches = [regex]::Matches($cleanPre, $adminPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-foreach ($m in $adminMatches) {
-  $user = $m.Groups[1].Value
-  $plainPassword = $m.Groups[2].Value.Trim()
-  $authorizedAdmins += $user
-  $adminPasswordMap[$user] = $plainPassword
+$lines = $cleanPre -split "`n" | ForEach-Object { $_.TrimEnd() }
+
+for ($i = 0; $i -lt $lines.Count; $i++) {
+  $line = $lines[$i].Trim()
+  if ($line -match '(?i)^Authorized Administrators:') {
+    $j = $i + 1
+    while ($j -lt $lines.Count) {
+      $ln = $lines[$j].Trim()
+      if ($ln -match '(?i)^Authorized Users:') { break }
+      if ($ln -eq "") { $j++; continue }
+
+      if ($ln -match '^(?<user>[A-Za-z0-9\-_\.]+)(?:\s*\(you\))?\s*$') {
+        $u = $matches['user']
+        $pwd = $null
+        for ($k = 1; $k -le 2; $k++) {
+          if ($j + $k -ge $lines.Count) { break }
+          $next = $lines[$j + $k].Trim()
+          if ($next -match '(?i)^password:\s*(?<p>.+)$') {
+            $pwd = $matches['p'].Trim()
+            $j = $j + $k
+            break
+          }
+        }
+        $authorizedAdmins += $u
+        if ($pwd) { $adminPasswordMap[$u] = $pwd }
+      }
+      elseif ($ln -match '^(?<user>[A-Za-z0-9\-_\.]+)\s+password:\s*(?<p>.+)$') {
+        $authorizedAdmins += $matches['user']
+        $adminPasswordMap[$matches['user']] = $matches['p'].Trim()
+      }
+      $j++
+    }
+    break
+  }
 }
 
 Write-Log "Parsed authorized admins count: $($authorizedAdmins.Count)"
@@ -131,12 +164,11 @@ foreach ($a in $authorizedAdmins) { Write-Log "Admin: $a / pwd: $($adminPassword
 # -----------------------
 # Parse Authorized Users
 # -----------------------
-$usersMatch = [regex]::Match($cleanPre, 'Authorized Users:(.+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 $authorizedUsers = @()
-if ($usersMatch.Success) {
-  $rawUsers = $usersMatch.Groups[1].Value
-  $usersClean = $rawUsers -replace '[^A-Za-z0-9]', ' '
-  $authorizedUsers = ($usersClean -split '\s+') | Where-Object { $_ -match '^\w+$' }
+if ($cleanPre -match '(?is)Authorized Users:(.*)') {
+  $usersBlock = $matches[1]
+  $usersClean = ($usersBlock -replace '[^A-Za-z0-9\-_\.`n]', ' ') -replace "`n", " "
+  $authorizedUsers = ($usersClean -split '\s+') | Where-Object { $_ -ne '' -and $_ -notmatch '(?i)^password$' }
   Write-Log "Parsed authorized users count: $($authorizedUsers.Count)"
   foreach ($u in $authorizedUsers) { Write-Log "User: $u" }
 }
@@ -198,8 +230,8 @@ foreach ($user in $allUsers) {
       Write-Log "  Result: Password change required at next logon"
     }
     catch {
-      Write-Host "Admin password for ${user}: $($adminPasswordMap[$user])"
-
+      Write-Host "  Warning: Could not enforce password change for $uname: $_" -ForegroundColor Yellow
+      Write-Log "  Warning: Could not enforce password change for $uname: $_"
     }
   }
   else {
