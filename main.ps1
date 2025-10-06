@@ -1,10 +1,7 @@
-# main.ps1
-# ------------------------
-# CyberPatriot Script Runner
-# ------------------------
+# main.ps1 - Console version
 Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
 
-# Define the scripts folder (relative to this script)
+# Define scripts folder (relative to this script)
 $scriptFolder = Join-Path -Path $PSScriptRoot -ChildPath "scripts"
 
 if (-not (Test-Path $scriptFolder)) {
@@ -12,7 +9,7 @@ if (-not (Test-Path $scriptFolder)) {
   exit 1
 }
 
-# Find all .ps1 scripts in the folder
+# Get all scripts
 $scripts = Get-ChildItem -Path $scriptFolder -Filter *.ps1 | Sort-Object Name
 
 if ($scripts.Count -eq 0) {
@@ -20,19 +17,40 @@ if ($scripts.Count -eq 0) {
   exit 1
 }
 
-# Show GUI checkbox menu using Out-GridView
-$selected = $scripts | Select-Object Name, FullName | Out-GridView -Title "Select scripts to run (CTRL+Click for multiple)" -PassThru
+# Show numbered menu
+Write-Host "`nAvailable scripts:" -ForegroundColor Yellow
+for ($i = 0; $i -lt $scripts.Count; $i++) {
+  Write-Host "[$($i+1)] $($scripts[$i].Name)"
+}
 
-if (-not $selected) {
+# Ask user which scripts to run
+$choice = Read-Host "`nEnter the numbers of the scripts to run (comma-separated, or 'all')"
+
+if ($choice -eq 'all') {
+  $selected = $scripts
+}
+else {
+  $indices = $choice -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' }
+  $selected = @()
+  foreach ($i in $indices) {
+    if ($i -gt 0 -and $i -le $scripts.Count) {
+      $selected += $scripts[$i - 1]
+    }
+    else {
+      Write-Host "Invalid selection: $i" -ForegroundColor Red
+    }
+  }
+}
+
+if ($selected.Count -eq 0) {
   Write-Host "No scripts selected. Exiting..." -ForegroundColor Yellow
   exit 0
 }
 
-# Run selected scripts
+# Run the selected scripts
 foreach ($script in $selected) {
   Write-Host "`nRunning $($script.Name)..." -ForegroundColor Cyan
   try {
-    # Run the script
     & $script.FullName
     Write-Host "$($script.Name) completed successfully!" -ForegroundColor Green
   }
