@@ -1,43 +1,39 @@
 # main.ps1
-Write-Host "Fetching and running CyberPatriot scripts..." -ForegroundColor Cyan
+# ------------------------
+# CyberPatriot Script Runner
+# ------------------------
+Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
 
-# Define your scripts in a list for easier scaling
-$scripts = @(
-  @{ Name = "Set-LockoutPolicy"; Url = "https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-LockoutPolicy.ps1" },
-  @{ Name = "Set-PasswordPolicy"; Url = "https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-PasswordPolicy.ps1" },
-  @{ Name = "Set-UserAccountSettings"; Url = "https://raw.githubusercontent.com/JaSperryTech-Main/CyberPatriotScript/main/scripts/Set-UserAccountSettings.ps1" }
-)
+# Define the scripts folder (relative to this script)
+$scriptFolder = Join-Path -Path $PSScriptRoot -ChildPath "scripts"
 
-# Show a menu
-Write-Host "`nAvailable scripts:" -ForegroundColor Yellow
-for ($i = 0; $i -lt $scripts.Count; $i++) {
-  Write-Host "[$($i+1)] $($scripts[$i].Name)"
+if (-not (Test-Path $scriptFolder)) {
+  Write-Host "Scripts folder not found at $scriptFolder" -ForegroundColor Red
+  exit 1
 }
 
-# Ask user which scripts to run
-$choice = Read-Host "`nEnter the numbers of the scripts you want to run (comma-separated, or 'all' to run all)"
+# Find all .ps1 scripts in the folder
+$scripts = Get-ChildItem -Path $scriptFolder -Filter *.ps1 | Sort-Object Name
 
-if ($choice -eq "all") {
-  $selected = $scripts
-}
-else {
-  $indices = $choice -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' }
-  $selected = @()
-  foreach ($i in $indices) {
-    if ($i -gt 0 -and $i -le $scripts.Count) {
-      $selected += $scripts[$i - 1]
-    }
-    else {
-      Write-Host "Invalid selection: $i" -ForegroundColor Red
-    }
-  }
+if ($scripts.Count -eq 0) {
+  Write-Host "No scripts found in $scriptFolder" -ForegroundColor Yellow
+  exit 1
 }
 
-# Run the selected scripts
+# Show GUI checkbox menu using Out-GridView
+$selected = $scripts | Select-Object Name, FullName | Out-GridView -Title "Select scripts to run (CTRL+Click for multiple)" -PassThru
+
+if (-not $selected) {
+  Write-Host "No scripts selected. Exiting..." -ForegroundColor Yellow
+  exit 0
+}
+
+# Run selected scripts
 foreach ($script in $selected) {
   Write-Host "`nRunning $($script.Name)..." -ForegroundColor Cyan
   try {
-    Invoke-RestMethod $script.Url | Invoke-Expression
+    # Run the script
+    & $script.FullName
     Write-Host "$($script.Name) completed successfully!" -ForegroundColor Green
   }
   catch {
