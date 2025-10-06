@@ -230,8 +230,8 @@ foreach ($user in $allUsers) {
       Write-Log "  Result: Password change required at next logon"
     }
     catch {
-      Write-Host "  Warning: Could not enforce password change for $uname: $_" -ForegroundColor Yellow
-      Write-Log "  Warning: Could not enforce password change for $uname: $_"
+      Write-Host "  Warning: Could not enforce password change for ${uname}: $_" -ForegroundColor Yellow
+      Write-Log "  Warning: Could not enforce password change for ${uname}: $_"
     }
   }
   else {
