@@ -102,7 +102,7 @@ foreach ($s in $matches) {
     Write-Log "Backup written to $backupFile"
   }
   catch {
-    Write-Log "WARNING: Failed to back up share $shareName: $_"
+    Write-Log "WARNING: Failed to back up share ${shareName}: $_"
   }
 
   # Attempt removal
@@ -111,7 +111,7 @@ foreach ($s in $matches) {
     Write-Log "Removed SMB share: $shareName"
   }
   catch {
-    Write-Log "ERROR: Failed to remove SMB share $shareName: $_"
+    Write-Log "ERROR: Failed to remove SMB share ${shareName}: $_"
   }
 }
 

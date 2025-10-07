@@ -1,74 +1,115 @@
-# main.ps1
-# ------------------------
-# CyberPatriot Script Runner (GUI)
-# ------------------------
-Write-Host "Detecting available CyberPatriot scripts..." -ForegroundColor Cyan
+Add-Type -AssemblyName PresentationFramework
 
 # ------------------------
-# Self-elevate script if not running as Administrator
-# ------------------------
-$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Write-Host "Script is not running as Administrator. Attempting to relaunch with admin rights..." -ForegroundColor Yellow
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = "powershell.exe"
-  $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-  $psi.Verb = "runas"
-  try {
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
-    exit
-  }
-  catch {
-    Write-Host "Failed to run as Administrator: $_" -ForegroundColor Red
-    exit 1
-  }
-}
-
-# ------------------------
-# Define scripts folder
+# Define Scripts Folder
 # ------------------------
 $scriptFolder = Join-Path -Path $PSScriptRoot -ChildPath "scripts"
-
 if (-not (Test-Path $scriptFolder)) {
   Write-Host "Scripts folder not found at $scriptFolder" -ForegroundColor Red
   exit 1
 }
 
-# ------------------------
-# Find all .ps1 scripts
-# ------------------------
-$scripts = Get-ChildItem -Path $scriptFolder -Filter *.ps1 | Sort-Object Name
-
-if ($scripts.Count -eq 0) {
-  Write-Host "No scripts found in $scriptFolder" -ForegroundColor Yellow
+# Get all subfolders (categories)
+$categories = Get-ChildItem -Path $scriptFolder -Directory | Sort-Object Name
+if ($categories.Count -eq 0) {
+  Write-Host "No subfolders found in $scriptFolder" -ForegroundColor Yellow
   exit 1
 }
 
 # ------------------------
-# GUI checkbox selection
+# Build XAML Window
 # ------------------------
-$selected = $scripts | Select-Object Name, FullName |
-Out-GridView -Title "Select scripts to run (CTRL+Click for multiple)" -PassThru
+[xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="CyberPatriot Script Runner"
+        Height="500" Width="700" WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <DockPanel>
+            <TabControl Name="MainTabs" DockPanel.Dock="Top"/>
+            <Button Content="Run Selected" DockPanel.Dock="Bottom"
+                    Margin="0,10,0,0" Width="120" Height="35" HorizontalAlignment="Right" Name="RunButton"/>
+        </DockPanel>
+    </Grid>
+</Window>
+"@
 
-if (-not $selected) {
-  Write-Host "No scripts selected. Exiting..." -ForegroundColor Yellow
-  exit 0
+# ------------------------
+# Load XAML
+# ------------------------
+$reader = (New-Object System.Xml.XmlNodeReader $xaml)
+$Window = [Windows.Markup.XamlReader]::Load($reader)
+
+$MainTabs = $Window.FindName("MainTabs")
+$RunButton = $Window.FindName("RunButton")
+
+# Store references to all panels for later lookup
+$Panels = @{}
+
+# ------------------------
+# Dynamically Create Tabs + Checkboxes
+# ------------------------
+foreach ($cat in $categories) {
+  # Create Tab
+  $tab = New-Object System.Windows.Controls.TabItem
+  $tab.Header = $cat.Name
+
+  # Scrollable container
+  $scroll = New-Object System.Windows.Controls.ScrollViewer
+  $scroll.VerticalScrollBarVisibility = "Auto"
+
+  # StackPanel for checkboxes
+  $panel = New-Object System.Windows.Controls.StackPanel
+  $scroll.Content = $panel
+  $tab.Content = $scroll
+
+  # Add tab
+  $MainTabs.Items.Add($tab)
+  $Panels[$cat.Name] = $panel
+
+  # Add scripts as checkboxes
+  $scripts = Get-ChildItem -Path $cat.FullName -Filter *.ps1 | Sort-Object Name
+  foreach ($script in $scripts) {
+    $cb = New-Object System.Windows.Controls.CheckBox
+    $cb.Content = $script.Name
+    $cb.Tag = $script.FullName
+    $panel.Children.Add($cb)
+  }
 }
 
 # ------------------------
-# Run selected scripts
+# Run Selected Scripts Button
 # ------------------------
-foreach ($script in $selected) {
-  Write-Host "`nRunning $($script.Name)..." -ForegroundColor Cyan
-  try {
-    & $script.FullName
-    Write-Host "$($script.Name) completed successfully!" -ForegroundColor Green
-  }
-  catch {
-    Write-Host "Error running $($script.Name): $_" -ForegroundColor Red
-  }
-}
+$RunButton.Add_Click({
+    $selectedScripts = @()
 
-Write-Host "`nAll selected scripts completed!" -ForegroundColor Green
+    foreach ($panel in $Panels.Values) {
+      foreach ($child in $panel.Children) {
+        if ($child.IsChecked) {
+          $selectedScripts += $child.Tag
+        }
+      }
+    }
+
+    if ($selectedScripts.Count -eq 0) {
+      [System.Windows.MessageBox]::Show("No scripts selected!", "Info")
+      return
+    }
+
+    foreach ($s in $selectedScripts) {
+      try {
+        Write-Host "`nRunning $s" -ForegroundColor Cyan
+        & $s
+        Write-Host "$s completed successfully!" -ForegroundColor Green
+      }
+      catch {
+        Write-Host "Error running ${s}: $_" -ForegroundColor Red
+      }
+    }
+
+    [System.Windows.MessageBox]::Show("All selected scripts completed!", "Done")
+  })
+
+# ------------------------
+# Show GUI
+# ------------------------
+$Window.ShowDialog() | Out-Null

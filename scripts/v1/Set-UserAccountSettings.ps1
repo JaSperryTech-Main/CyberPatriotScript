@@ -245,5 +245,5 @@ foreach ($user in $allUsers) {
 }
 
 Write-Log "Script complete."
-Write-Host "`nLog saved to $logPath" -ForegroundColor Yellow
+Write-Host "`nLog saved to $logPath"
 Start-Process notepad.exe $logPath
